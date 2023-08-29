@@ -1,0 +1,228 @@
+pipeline {
+    agent any
+    environment{
+                GIT_COMMITER_NAME = sh(script: "git --no-pager show -s --format='%an'",returnStdout: true).trim()
+    }
+   options {
+        timestamps()
+        parallelsAlwaysFailFast()
+        buildDiscarder logRotator(daysToKeepStr: '1')
+        ansiColor('xterm')
+    }
+    stages { 
+       stage('Build') {
+            steps {
+                echo 'Building the iBEGOO web frontend application'
+                 sh '''#!/bin/sh
+                        source ~/.bashrc
+                        set -o xtrace
+                        rm -rf dist/*
+                        sudo npm install --global yarn
+                        nvm use 12.12.0
+                        yarn install
+                        node --max_old_space_size=8048 build/nightly-build.js --verbose
+                     '''
+            }
+        }
+       stage('cypress test'){
+            parallel{
+               stage('first agent'){
+                 steps{
+                     script {
+                         CypressKube1()
+                     }
+
+                 }
+               }
+               stage('second agent'){
+                 steps{
+                     script {
+                         CypressKube2()
+                     }
+                 }
+              }          
+            }
+        }
+   
+
+    }
+    post {
+        always {
+          echo 'Cleaning up Workspace'
+//             cleanWs()
+        }
+        failure {
+            writeFile file: 'env.properties', text: "GIT_COMMITER_NAME=${GIT_COMMITER_NAME}"
+            emailext (body: '''Hi,
+
+$PROJECT_NAME - Build # $BUILD_NUMBER - COMMITER # ${PROPFILE,file="env.properties",property="GIT_COMMITER_NAME"}  - $BUILD_STATUS:
+
+Check console output at $BUILD_URL to view the results.
+
+Please use "Dev-team" as username/password on Jenkins !
+
+Note - Please do not reply to this email.
+
+Thanks,
+DevOps Team.''', subject: '$PROJECT_NAME - Build # $BUILD_NUMBER - $BUILD_STATUS!', to: 'X@abxrengine.com')
+          
+        }
+        
+    }   
+}
+
+
+def CypressKube1(){
+    podTemplate(cloud: 'kube1', containers: [
+        containerTemplate(name: 'clone', image: 'alpine/git:latest', ttyEnabled: true, command: 'cat'),
+        containerTemplate(name: 'build', image: 'node:latest', command: 'cat', ttyEnabled: true),
+        containerTemplate(name: 'cypress1', image: 'cypress/browsers:node14.17.0-chrome91-ff89', command: 'cat', ttyEnabled: true),
+        containerTemplate(name: 'cypress2', image: 'cypress/browsers:node14.17.0-chrome91-ff89', command: 'cat', ttyEnabled: true)]
+  ) {
+    node(POD_LABEL) {
+        stage('clone') {
+            container('clone'){
+                            git branch: "${BRANCH_NAME}", credentialsId: '	web_app ', url: 'https://github.com/ABXR-Studio/ABXR-Django-Frontend.git'
+                        }
+        }
+
+        stage('Build') {
+            container('build'){
+                echo 'Building the iBEGOO web frontend application'
+                sh '''#!/bin/sh 
+                      yarn install
+                '''
+                        }                
+        }
+        
+        stage('Cypress'){
+            parallel CypressStages12()
+        }
+        
+        
+    }
+}
+}
+
+def CypressStages12(){
+    stages = [:]
+    stages["Cypress1"] = { stage('Cypress1') {
+        container('cypress1'){
+            sh """
+                yarn cypress install
+                Xvfb :97 &
+                export DISPLAY=:97
+                npx cypress run --spec cypress/integration/assets/asset-page-spec.js --config video=false
+            """
+        }
+    }
+    }
+
+    stages["Cypress2"] = { stage('Cypress2') {
+        container('cypress2'){
+            sh """
+                yarn cypress install
+                Xvfb :101 &
+                export DISPLAY=:101
+                npx cypress run --spec cypress/integration/assets/asset-test-popups-spec.js,cypress/integration/assets/asset-video-spec.js,cypress/integration/assets/asset-voice-spec.js,cypress/integration/assets/create-asset-spec.js,cypress/integration/assets/create-asset-test-spec.js,cypress/integration/assets/update-asset-spec.js  --config video=false
+            """
+        }
+    }
+    }
+  return stages
+}
+
+
+def CypressKube2(){
+    podTemplate(cloud: 'kube2', containers: [
+    containerTemplate(name: 'clone', image: 'alpine/git:latest', ttyEnabled: true, command: 'cat'),
+    containerTemplate(name: 'build', image: 'node:latest', command: 'cat', ttyEnabled: true),
+    containerTemplate(name: 'cypress3', image: 'cypress/browsers:node14.17.0-chrome91-ff89', command: 'cat', ttyEnabled: true),
+    containerTemplate(name: 'cypress4', image: 'cypress/browsers:node14.17.0-chrome91-ff89', command: 'cat', ttyEnabled: true)
+  ]
+  ) {
+    node(POD_LABEL) {
+        stage('clone') {
+            container('clone'){
+                            git branch: "${BRANCH_NAME}", credentialsId: ' web_app ', url: 'https://github.com/ABXR-Studio/ABXR-Django-Frontend.git'
+                        }
+        }
+
+        stage('Build') {
+            container('build'){
+                echo 'Building the iBEGOO web frontend application'
+                sh '''#!/bin/sh 
+                      yarn install
+                '''
+                        }                
+        }
+        
+        stage('Cypress'){
+            parallel CypressStages34()
+        }
+        
+        
+    }
+}
+}
+
+def CypressStages34(){
+    stages = [:]
+    stages["Cypress3"] = { stage('Cypress3') {
+        container('cypress3'){
+            sh """
+                yarn cypress install
+                Xvfb :97 &
+                export DISPLAY=:97
+                npx cypress run --spec cypress/integration/profile/**/*,cypress/integration/invites/**/*,cypress/integration/* --config video=false
+            """
+        }
+    }
+    }
+
+    stages["Cypress4"] = { stage('Cypress4') {
+        container('cypress4'){
+            sh """
+                yarn cypress install
+                Xvfb :101 &
+                export DISPLAY=:101
+                npx cypress run --spec cypress/integration/projects/*,cypress/integration/projects/scenes/*,cypress/integration/projects/scenes/Character/*,cypress/integration/projects/scenes/Object3D/*,cypress/integration/landing_page/**/*  --config video=false
+            """
+        }
+    }
+    }
+  return stages
+}
+
+
+
+---------
+
+pipeline {
+    agent any
+
+    stages {
+        stage('clone') {
+            steps{
+            git branch: "dev", credentialsId: '	jenkins-git ', url: 'https://github.com/ABXR-Studio/ABXR-Django-Frontend.git'                 
+        }   }
+        
+    stage('SonarQube analysis') {
+      steps {
+        script {
+           scannerHome = tool 'SonarQubeScanner-4.6.2'
+        }
+        withSonarQubeEnv('SonarQube8.9.3') {
+          sh "${scannerHome}/bin/sonar-scanner -X -Dsonar.projectKey=abxr-django-frontend  -Dsonar.projectVersion=1.1 -Dsonar.sources=. -Dsonar.host.url=http://44.200.74.88:9000 -Dsonar.login=684ba09f80aca73546e03da7f1db273c8b800239"      
+        }
+      }
+    }
+       stage("Quality Gate") {
+            steps {
+              timeout(time: 5, unit: 'MINUTES') {
+                waitForQualityGate abortPipeline: true
+              }
+            }
+          } 
+}
+}
