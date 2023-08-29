@@ -1,0 +1,277 @@
+pipeline {
+    agent any
+    environment{
+        TTS_TOKEN = credentials('TTS_TOKEN')
+        Chat_Webhook = credentials('Chat_Webhook')
+        web_app = credentials('web_app')
+        BRANCH_NAME='dev'   
+    }
+   options {
+        timestamps()
+        parallelsAlwaysFailFast()
+        buildDiscarder logRotator(daysToKeepStr: '1')
+        ansiColor('xterm')
+    }
+    stages { 
+
+       stage('cypress test'){
+            when{
+                expression{env.BRANCH_NAME = 'dev'}
+                beforeOptions true
+                beforeInput true
+                beforeAgent true
+            }
+
+            parallel{
+               stage('first POD'){
+                 steps{
+                     script {
+                         CypressKube1()
+                     }
+
+                 }
+               }
+               stage('second POD'){
+                 steps{
+                     script {
+                         CypressKube2()
+                     }
+                 }
+              }          
+            }
+        }
+   
+
+    }
+    post {
+        always {
+          echo 'Cleaning up Workspace'
+          cleanWs()
+        }
+        
+    }   
+}
+
+
+def CypressKube1(){
+    podTemplate(cloud: 'Mega-kind', containers: [
+        containerTemplate(name: 'cypress1', image: 'cypress/browsers', command: 'cat', ttyEnabled: true),
+        containerTemplate(name: 'cypress2', image: 'cypress/browsers', command: 'cat', ttyEnabled: true)]) 
+        {
+            node(POD_LABEL) {
+                
+                stage('clone') {
+                    container('Cypress1'){
+                            git branch: 'cypress-devops', credentialsId: '	web_app', url: 'https://github.com/ABXR-Studio/ABXR-Django-Frontend.git'
+                        }
+                }
+                stage('Cypress'){
+                    parallel CypressStages12()
+                }    
+            }
+        }
+    }   
+
+def CypressStages12(){
+    stages = [:]
+    stages["Cypress1"] = { stage('Cypress1') {
+        container('cypress1'){
+            echo 'Building the iBEGOO web frontend application'
+            sh '''#!/bin/bash 
+
+                    BRANCH_NAME="dev"
+                    if [[ "$BRANCH_NAME" == "dev" ]]; then
+                        echo "VUE_APP_BASE_URL=https://dev-api.abxrengine.com/" >> .env
+                        echo "VUE_APP_URL=https://dev.abxrengine.com/" >> .env
+                        echo "VUE_APP_PREVIEW_DATA_URL=https://sinhvho.com/ibegoo-preview/nightly/Build/3.data.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_FRAMEWORK_URL=https://sinhvho.com/ibegoo-preview/nightly/Build/3.framework.js.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_CODE_URL=https://sinhvho.com/ibegoo-preview/nightly/Build/3.wasm.unityweb" >> .env
+                        echo "NODE_ENV='development'" >> .env
+                        echo "VUE_APP_MEASUREMENT_ID=G-4PWSVFHPKX" >> .env
+                        echo "VUE_APP_STRIPE_KEY=pk_test_51N0lcmDvrb066uxG3h4IwtDzI5oh6Hqry8eeuxxpKCI6TcSRluNPkh9vnjL3ZRltbr5UuHYkSnyyWTZDlWHHl0yZ00vMcTDZyo" >> .env
+                        echo "VUE_APP_STRIPE_TABLE=prctbl_1N4O2EDvrb066uxG588RKACb" >> .env
+                        echo "VUE_APP_SKETCHFAB_CLIENT_ID=BoSTExiP7MmyaN1JfL07VZsscxFcCXQFzA1fKMQt" >> .env
+                    
+                    elif [[ "$BRANCH_NAME" == "stage" ]]; then
+                        echo "VUE_APP_BASE_URL=https://stage-api.abxrengine.com/" >> .env
+                        echo "VUE_APP_URL=https://stage.abxrengine.com/" >> .env
+                        echo "VUE_APP_PREVIEW_DATA_URL=https://dev-preview.abxrengine.com/Build/ABXR-Preview-Dev.data.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_FRAMEWORK_URL=https://dev-preview.abxrengine.com/Build/ABXR-Preview-Dev.framework.js.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_CODE_URL=https://dev-preview.abxrengine.com/Build/ABXR-Preview-Dev.wasm.unityweb" >> .env
+                        echo "NODE_ENV='development'" >> .env
+                        echo "VUE_APP_STRIPE_KEY=pk_test_51N0lcmDvrb066uxG3h4IwtDzI5oh6Hqry8eeuxxpKCI6TcSRluNPkh9vnjL3ZRltbr5UuHYkSnyyWTZDlWHHl0yZ00vMcTDZyo" >> .env
+                        echo "VUE_APP_STRIPE_TABLE=prctbl_1N4O2EDvrb066uxG588RKACb" >> .env
+                        echo "VUE_APP_SKETCHFAB_CLIENT_ID=dXOwgdvlLFoLNItpcxR93Us6aBzKWeBKjRgu9c0z" >> .env
+                    
+                    elif [[ "$BRANCH_NAME" == "prod" ]]; then
+                    echo "VUE_APP_BASE_URL=https://api.abxrengine.com/" >> .env
+                    echo "VUE_APP_PREVIEW_DATA_URL=https://preview.abxrengine.com/Build/prod.data.unityweb" >> .env
+                    echo "VUE_APP_PREVIEW_FRAMEWORK_URL=https://preview.abxrengine.com/Build/prod.framework.js.unityweb" >> .env
+                    echo "VUE_APP_PREVIEW_CODE_URL=https://preview.abxrengine.com/Build/prod.wasm.unityweb" >> .env
+                    echo "NODE_ENV='production'" >> .env
+                    fi
+
+                    yarn install
+                    Xvfb :97 &
+                    export DISPLAY=:97
+                    echo "Port=8080" >> .env
+                    echo "VUE_APP_TTS_TOKEN=$TTS_TOKEN" >> .env
+                    npx cypress info
+                    nohup yarn start > nohup.log 2>&1 &
+                    stringif=$( tail -n 2 ./nohup.log | sed '$d' )
+                    newstr=" I  Your application is running here: http://localhost:8080"
+                    ls -la
+
+                    while [[ "$stringif" != "$newstr" ]]
+                    do
+                    echo " sleep 30 "
+                    sleep 30
+                    stringif=$( tail -n 2 ./nohup.log | sed '$d' )
+                    done
+                    echo "$stringif"
+                    npx cypress info
+                    npx cypress run --spec "$(node cypress/plugins/cypress-spec-split.js '4' '0' )"   --config video=false --browser firefox
+                
+            '''
+        }
+    }
+    }
+
+    stages["Cypress2"] = { stage('Cypress2') {
+        container('cypress2'){
+            sh '''
+                yarn install
+                Xvfb :101 &
+                export DISPLAY=:101
+                ls -la
+
+                while [[ "$stringif" != "$newstr" ]]
+                do
+                echo " sleep 30 "
+                sleep 30
+                stringif=$( tail -n 2 ./nohup.log | sed '$d' )
+                done
+                echo "$stringif"
+                npx cypress info
+                npx cypress run --spec "$(node cypress/plugins/cypress-spec-split.js '4' '1' )"   --config video=false --browser firefox
+            '''
+        }
+    }
+    }
+  return stages
+}
+
+
+def CypressKube2(){
+    podTemplate(cloud: 'Mega-kind', containers: [
+    containerTemplate(name: 'cypress3', image: 'cypress/browsers', command: 'cat', ttyEnabled: true),
+    containerTemplate(name: 'cypress4', image: 'cypress/browsers', command: 'cat', ttyEnabled: true)
+  ]
+  ) {
+    node(POD_LABEL) {
+
+        stage('clone') {
+            container('Cypress3'){
+                    git branch: 'cypress-devops', credentialsId: '	web_app', url: 'https://github.com/ABXR-Studio/ABXR-Django-Frontend.git'
+                }
+        }
+        stage('Cypress'){
+            parallel CypressStages34()
+        }
+        
+        
+    }
+}
+}
+
+def CypressStages34(){
+    stages = [:]
+    stages["Cypress3"] = { stage('Cypress3') {
+        container('cypress3'){
+            git branch: 'cypress-devops', credentialsId: '	web_app', url: 'https://github.com/ABXR-Studio/ABXR-Django-Frontend.git'
+            echo 'Building the iBEGOO web frontend application'
+            sh '''#!/bin/bash 
+
+                    BRANCH_NAME="dev"
+                    if [[ "$BRANCH_NAME" == "dev" ]]; then
+                        echo "VUE_APP_BASE_URL=https://dev-api.abxrengine.com/" >> .env
+                        echo "VUE_APP_URL=https://dev.abxrengine.com/" >> .env
+                        echo "VUE_APP_PREVIEW_DATA_URL=https://sinhvho.com/ibegoo-preview/nightly/Build/3.data.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_FRAMEWORK_URL=https://sinhvho.com/ibegoo-preview/nightly/Build/3.framework.js.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_CODE_URL=https://sinhvho.com/ibegoo-preview/nightly/Build/3.wasm.unityweb" >> .env
+                        echo "NODE_ENV='development'" >> .env
+                        echo "VUE_APP_MEASUREMENT_ID=G-4PWSVFHPKX" >> .env
+                        echo "VUE_APP_STRIPE_KEY=pk_test_51N0lcmDvrb066uxG3h4IwtDzI5oh6Hqry8eeuxxpKCI6TcSRluNPkh9vnjL3ZRltbr5UuHYkSnyyWTZDlWHHl0yZ00vMcTDZyo" >> .env
+                        echo "VUE_APP_STRIPE_TABLE=prctbl_1N4O2EDvrb066uxG588RKACb" >> .env
+                        echo "VUE_APP_SKETCHFAB_CLIENT_ID=BoSTExiP7MmyaN1JfL07VZsscxFcCXQFzA1fKMQt" >> .env
+                    
+                    elif [[ "$BRANCH_NAME" == "stage" ]]; then
+                        echo "VUE_APP_BASE_URL=https://stage-api.abxrengine.com/" >> .env
+                        echo "VUE_APP_URL=https://stage.abxrengine.com/" >> .env
+                        echo "VUE_APP_PREVIEW_DATA_URL=https://dev-preview.abxrengine.com/Build/ABXR-Preview-Dev.data.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_FRAMEWORK_URL=https://dev-preview.abxrengine.com/Build/ABXR-Preview-Dev.framework.js.unityweb" >> .env
+                        echo "VUE_APP_PREVIEW_CODE_URL=https://dev-preview.abxrengine.com/Build/ABXR-Preview-Dev.wasm.unityweb" >> .env
+                        echo "NODE_ENV='development'" >> .env
+                        echo "VUE_APP_STRIPE_KEY=pk_test_51N0lcmDvrb066uxG3h4IwtDzI5oh6Hqry8eeuxxpKCI6TcSRluNPkh9vnjL3ZRltbr5UuHYkSnyyWTZDlWHHl0yZ00vMcTDZyo" >> .env
+                        echo "VUE_APP_STRIPE_TABLE=prctbl_1N4O2EDvrb066uxG588RKACb" >> .env
+                        echo "VUE_APP_SKETCHFAB_CLIENT_ID=dXOwgdvlLFoLNItpcxR93Us6aBzKWeBKjRgu9c0z" >> .env
+                    
+                    elif [[ "$BRANCH_NAME" == "prod" ]]; then
+                    echo "VUE_APP_BASE_URL=https://api.abxrengine.com/" >> .env
+                    echo "VUE_APP_PREVIEW_DATA_URL=https://preview.abxrengine.com/Build/prod.data.unityweb" >> .env
+                    echo "VUE_APP_PREVIEW_FRAMEWORK_URL=https://preview.abxrengine.com/Build/prod.framework.js.unityweb" >> .env
+                    echo "VUE_APP_PREVIEW_CODE_URL=https://preview.abxrengine.com/Build/prod.wasm.unityweb" >> .env
+                    echo "NODE_ENV='production'" >> .env
+                    fi
+
+                    yarn install
+                    Xvfb :97 &
+                    export DISPLAY=:97
+                    echo "Port=8080" >> .env
+                    echo "VUE_APP_TTS_TOKEN=$TTS_TOKEN" >> .env
+                    npx cypress info
+                    nohup yarn start > nohup.log 2>&1 &
+                    stringif=$( tail -n 2 ./nohup.log | sed '$d' )
+                    newstr=" I  Your application is running here: http://localhost:8080"
+                    ls -la
+
+                    while [[ "$stringif" != "$newstr" ]]
+                    do
+                    echo " sleep 30 "
+                    sleep 30
+                    stringif=$( tail -n 2 ./nohup.log | sed '$d' )
+                    done
+                    echo "$stringif"
+                    npx cypress info
+                    npx cypress run --spec "$(node cypress/plugins/cypress-spec-split.js '4' '2' )"   --config video=false --browser firefox
+                
+            '''
+        }
+    }
+    }
+
+    stages["Cypress4"] = { stage('Cypress4') {
+        container('cypress4'){
+            sh '''
+                yarn install
+                Xvfb :101 &
+                export DISPLAY=:101
+                ls -la
+
+                while [[ "$stringif" != "$newstr" ]]
+                do
+                echo " sleep 30 "
+                sleep 30
+                stringif=$( tail -n 2 ./nohup.log | sed '$d' )
+                done
+                echo "$stringif"
+                npx cypress info
+                npx cypress run --spec "$(node cypress/plugins/cypress-spec-split.js '4' '3' )"   --config video=false --browser firefox
+            '''
+        }
+    }
+    }
+  return stages
+}
+
+
